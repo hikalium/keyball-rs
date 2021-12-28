@@ -1,0 +1,26 @@
+[package]
+name = "keyball-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["hikalium <hikalium@hikalium.com>"]
+license = "GPL-3.0"
+
+[dependencies]
+cortex-m = "0.7.2"
+usb-device= "0.2.8"
+usbd-serial = "0.1.1"
+usbd-hid = "0.5.1"
+ssd1306 = "*"
+embedded-graphics = "*"
+display-interface = "0.4"
+once_cell = {version = "1.9.0", default-features = false}
+panic-halt = "0.2.0"
+smart-leds = "0.3.0"
+embedded-time = "0.12.0"
+nb = "1.0.0"
+pio = "0.1.0"
+ws2812-pio = { git = "https://github.com/ithinuel/ws2812-pio-rs", rev = "4f0d81e594ea9934f9c4c38ed9824ad0cce4ebb5" }
+pro_micro_rp2040 = {git = "https://github.com/hikalium/rp-hal.git", branch = "release_030"}
+# pro_micro_rp2040 = { path = "../rp-hal/boards/pro_micro_rp2040" }
+embedded-hal = { version = "0.2.4", features = ["unproven"] }
+cortex-m-rt = { version = "0.7.0"}
