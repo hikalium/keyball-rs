@@ -26,11 +26,13 @@ use crate::keymap::*;
 use crate::pmw3360::*;
 use crate::KeyMapping::*;
 
+use crate::hal::gpio::DynPin;
 use core::cell::RefCell;
 use core::cmp::min;
 use core::fmt;
 use core::str::from_utf8;
 use core::str::Utf8Error;
+use cortex_m::delay::Delay;
 use cortex_m::interrupt::CriticalSection;
 use cortex_m::interrupt::Mutex;
 use cortex_m::prelude::_embedded_hal_spi_FullDuplex;
@@ -182,6 +184,7 @@ type DisplayI2C = ssd1306::prelude::I2CInterface<
 >;
 
 static I2C_INTERFACE: Mutex<OnceCell<RefCell<DisplayI2C>>> = Mutex::new(OnceCell::new());
+static DELAY: Mutex<OnceCell<RefCell<Delay>>> = Mutex::new(OnceCell::new());
 
 #[doc(hidden)]
 pub fn _print(row: usize, args: fmt::Arguments) {
@@ -215,6 +218,17 @@ pub fn _print(row: usize, args: fmt::Arguments) {
 
 macro_rules! print {
             ($row:expr, $($arg:expr),+) => ($crate::_print($row, format_args!($($arg),+)));
+}
+
+fn delay_ms(ms: u32) {
+    let cs = unsafe { CriticalSection::new() };
+    let delay = &mut *DELAY.borrow(&cs).get().unwrap().borrow_mut();
+    delay.delay_ms(ms);
+}
+fn delay_us(us: u32) {
+    let cs = unsafe { CriticalSection::new() };
+    let delay = &mut *DELAY.borrow(&cs).get().unwrap().borrow_mut();
+    delay.delay_us(us);
 }
 
 #[entry]
@@ -393,7 +407,12 @@ fn body() -> Result<(), i32> {
 
     let spi = RefCell::new(spi);
     let spi_ncs = RefCell::new(spi_ncs);
-    let delay = RefCell::new(delay);
+
+    unsafe {
+        let cs = CriticalSection::new();
+        let global_delay = DELAY.borrow(&cs);
+        global_delay.set(RefCell::new(delay)).map_err(|_| 0)?;
+    }
 
     let read_pmw3360_reg = |reg: u8| -> Result<u8, u8> {
         spi_ncs.borrow_mut().set_low().unwrap();
@@ -403,9 +422,9 @@ fn body() -> Result<(), i32> {
             if sspsr.tfe().bit_is_set() && sspsr.bsy().bit_is_clear() {
                 break;
             }
-            delay.borrow_mut().delay_us(10);
+            delay_us(10);
         }
-        delay.borrow_mut().delay_us(160);
+        delay_us(160);
         let send_success = spi.borrow_mut().send(0x00); // fake write to read
                                                         // wait to finish sending the fake data
         loop {
@@ -413,7 +432,7 @@ fn body() -> Result<(), i32> {
             if sspsr.tfe().bit_is_set() && sspsr.bsy().bit_is_clear() {
                 break;
             }
-            delay.borrow_mut().delay_us(10);
+            delay_us(10);
         }
         spi.borrow_mut().read().unwrap(); // fake read
         let ret = match send_success {
@@ -427,7 +446,7 @@ fn body() -> Result<(), i32> {
             Err(_) => Err(2),
         };
         spi_ncs.borrow_mut().set_high().unwrap();
-        delay.borrow_mut().delay_us(20);
+        delay_us(20);
         ret
     };
     let write_pmw3360_reg = |reg: u8, data: u8| -> Result<(), u8> {
@@ -448,29 +467,29 @@ fn body() -> Result<(), i32> {
             if sspsr.tfe().bit_is_set() && sspsr.bsy().bit_is_clear() {
                 break;
             }
-            delay.borrow_mut().delay_us(10);
+            delay_us(10);
         }
         spi.borrow_mut().read().unwrap(); // fake read
         spi.borrow_mut().read().unwrap(); // fake read
         spi_ncs.borrow_mut().set_high().unwrap();
-        delay.borrow_mut().delay_us(180);
+        delay_us(180);
         ret
     };
     let write_pmw3360_srom_burst = |data: &[u8]| -> Result<(), u8> {
-        delay.borrow_mut().delay_ms(50);
+        delay_ms(50);
         spi_ncs.borrow_mut().set_low().unwrap();
         let send_success = spi.borrow_mut().send(SROM_LOAD_BURST | (1 << 7));
-        delay.borrow_mut().delay_us(20);
+        delay_us(20);
         let ret = match send_success {
             Ok(_) => {
                 for v in data.iter() {
                     loop {
-                        delay.borrow_mut().delay_us(15);
+                        delay_us(15);
                         match spi.borrow_mut().send(*v) {
                             Ok(_) => break,
                             Err(nb::Error::WouldBlock) => {
                                 // tx buffer full: wait a bit and try again
-                                delay.borrow_mut().delay_us(20);
+                                delay_us(20);
                             }
                             Err(_) => return Err(5),
                         }
@@ -485,7 +504,7 @@ fn body() -> Result<(), i32> {
             if sspsr.tfe().bit_is_set() && sspsr.bsy().bit_is_clear() {
                 break;
             }
-            delay.borrow_mut().delay_us(10);
+            delay_us(10);
         }
         loop {
             // read out all rx data
@@ -496,7 +515,7 @@ fn body() -> Result<(), i32> {
             spi.borrow_mut().read().unwrap(); // fake read
         }
         spi_ncs.borrow_mut().set_high().unwrap();
-        delay.borrow_mut().delay_us(180);
+        delay_us(180);
         ret
     };
 
@@ -508,9 +527,9 @@ fn body() -> Result<(), i32> {
             if sspsr.tfe().bit_is_set() && sspsr.bsy().bit_is_clear() {
                 break;
             }
-            delay.borrow_mut().delay_us(10);
+            delay_us(10);
         }
-        delay.borrow_mut().delay_us(35 /* t_SRAD_MOTBR */);
+        delay_us(35 /* t_SRAD_MOTBR */);
         let mut report = [0; 12];
         let mut ret = Err(6);
         spi.borrow_mut().read().unwrap(); // fake read
@@ -522,7 +541,7 @@ fn body() -> Result<(), i32> {
                 if sspsr.rne().bit_is_set() {
                     break;
                 }
-                delay.borrow_mut().delay_us(10);
+                delay_us(10);
             }
             ret = match send_success {
                 Ok(_) => {
@@ -537,7 +556,7 @@ fn body() -> Result<(), i32> {
             };
         }
         spi_ncs.borrow_mut().set_high().unwrap();
-        delay.borrow_mut().delay_us(20);
+        delay_us(20);
         if let Err(e) = ret {
             Err(e)
         } else {
@@ -548,7 +567,7 @@ fn body() -> Result<(), i32> {
     keyball46.print_num(5, line!());
 
     write_pmw3360_reg(POWER_UP_RESET, 0x5A)?;
-    delay.borrow_mut().delay_ms(50);
+    delay_ms(50);
 
     keyball46.print_num(5, line!());
 
@@ -560,7 +579,7 @@ fn body() -> Result<(), i32> {
 
     write_pmw3360_reg(CONFIG2, 0x20)?;
     write_pmw3360_reg(SROM_ENABLE, 0x1d)?;
-    delay.borrow_mut().delay_ms(10);
+    delay_ms(10);
     write_pmw3360_reg(SROM_ENABLE, 0x18)?;
 
     write_pmw3360_srom_burst(&FIRMWARE)?;
@@ -587,15 +606,17 @@ fn body() -> Result<(), i32> {
     if is_ball_enabled {
         write_pmw3360_reg(MOTION_BURST, 0x00)?; // Begin motion burst
     }
+    // Assume that the ball is on the right side.
+    // TODO(hikalium): Detect which side we are properly
+    let is_right_hand_side = is_ball_enabled;
 
-    use hal::gpio::DynPin;
     let row0 = pins.gpio29.into_push_pull_output();
     let row1 = pins.gpio28.into_push_pull_output();
     let row2 = pins.gpio27.into_push_pull_output();
     let row3 = pins.gpio26.into_push_pull_output();
 
     // Top to bottom, Top view
-    let mut rows: [&mut DynPin; 4] = [
+    let rows: [&mut DynPin; 4] = [
         &mut row0.into(),
         &mut row1.into(),
         &mut row2.into(),
@@ -610,7 +631,7 @@ fn body() -> Result<(), i32> {
     let col5 = pins.gpio9.into_pull_up_input();
 
     // Left to Right, Top view
-    let cols: [&mut DynPin; 6] = [
+    let mut cols: [&mut DynPin; 6] = [
         &mut col5.into(),
         &mut col4.into(),
         &mut col3.into(),
@@ -618,52 +639,35 @@ fn body() -> Result<(), i32> {
         &mut col1.into(),
         &mut col0.into(),
     ];
+    if !is_right_hand_side {
+        cols.reverse();
+    }
 
     rows[0].set_low().unwrap();
     rows[1].set_high().unwrap();
     rows[2].set_high().unwrap();
     rows[3].set_high().unwrap();
 
+    let mut key_scanner = KeyScanner::new(&KEYMAP_LEFT, rows, cols);
+
     // Move the cursor up and down every 200ms
     let mut last_keycodes = [0u8; 6];
+    let mut last_modifiers = 0;
     loop {
-        let mut mouse_buttons = 0;
-        let mut keycodes = [0u8; 6];
-        let mut next_keycode_index = 0;
+        let result = key_scanner.scan();
+        let keycodes = result.keycodes;
+        let modifiers = result.modifiers;
+        let mouse_buttons = result.mouse_buttons;
 
-        for (y, keymap_row) in KEYMAP_LEFT.iter().enumerate() {
-            for (i, row) in rows.iter_mut().enumerate() {
-                if i == y {
-                    row.set_low().unwrap();
-                } else {
-                    row.set_high().unwrap();
-                }
-            }
-            delay.borrow_mut().delay_ms(5); // Wait a bit to propagete the voltage
-            for (x, col) in cols.iter().enumerate() {
-                if col.is_low().unwrap() && next_keycode_index < keycodes.len() {
-                    match keymap_row[x] {
-                        Normal(keycode) => {
-                            keycodes[next_keycode_index] = keycode;
-                            next_keycode_index += 1;
-                        }
-                        Mouse(button) => {
-                            mouse_buttons |= button;
-                        }
-                        Empty => {}
-                    }
-                }
-            }
-        }
-
-        if last_keycodes != keycodes {
+        if last_keycodes != keycodes || last_modifiers != modifiers {
             let rep_up = KeyboardReport2 {
-                modifier: 0,
+                modifier: modifiers,
                 reserved: 0,
                 keycodes,
             };
             push_key_event(rep_up).ok().unwrap_or(0);
             last_keycodes = keycodes;
+            last_modifiers = modifiers;
         }
 
         if is_ball_enabled {
@@ -679,6 +683,75 @@ fn body() -> Result<(), i32> {
                 pan: 0,
             };
             push_mouse_movement(rep_down).ok().unwrap_or(0);
+        }
+    }
+}
+
+struct KeyScanResult {
+    keycodes: [u8; 6],
+    modifiers: u8,
+    mouse_buttons: u8,
+}
+
+struct KeyScanner<'a> {
+    keymap: &'a KeyMap,
+    rows: [&'a mut DynPin; 4],
+    cols: [&'a mut DynPin; 6],
+}
+
+impl<'a> KeyScanner<'a> {
+    fn new(keymap: &'a KeyMap, rows: [&'a mut DynPin; 4], cols: [&'a mut DynPin; 6]) -> Self {
+        KeyScanner { keymap, rows, cols }
+    }
+    fn scan(&mut self) -> KeyScanResult {
+        let mut mouse_buttons = 0;
+        let mut keycodes = [0u8; 6];
+        let mut modifiers = 0;
+        let mut next_keycode_index = 0;
+
+        for (y, keymap_row) in self.keymap.iter().enumerate() {
+            for (i, row) in self.rows.iter_mut().enumerate() {
+                if i == y {
+                    row.set_low().unwrap();
+                } else {
+                    row.set_high().unwrap();
+                }
+            }
+            delay_ms(5); // Wait a bit to propagete the voltage
+            let mut reboot_to_bootsel = true;
+            for (x, col) in self.cols.iter().enumerate() {
+                if col.is_low().unwrap() {
+                    if next_keycode_index < keycodes.len() {
+                        match keymap_row[x] {
+                            K(keycode) => {
+                                keycodes[next_keycode_index] = keycode;
+                                next_keycode_index += 1;
+                            }
+                            KM(modifier) => {
+                                modifiers |= modifier;
+                            }
+                            M(button) => {
+                                mouse_buttons |= button;
+                            }
+                            Empty => {}
+                        }
+                    }
+                } else {
+                    reboot_to_bootsel = false;
+                }
+            }
+            if reboot_to_bootsel {
+                // Reboot the device into BOOTSEL mode when all keys in the same column is pressed
+                hal::rom_data::reset_to_usb_boot(0, 0);
+                loop {
+                    cortex_m::asm::wfe();
+                }
+            }
+        }
+        KeyScanResult {
+            keycodes,
+            modifiers,
+            mouse_buttons,
         }
     }
 }

@@ -1,3 +1,15 @@
+// https://wiki.osdev.org/USB_Human_Interface_Devices
+// https://www.win.tue.nl/~aeb/linux/kbd/scancodes-14.html
+
+pub const LCTRL: u8 = 0b00000001;
+pub const LSHIFT: u8 = 0b00000010;
+pub const LALT: u8 = 0b00000100;
+pub const LGUI: u8 = 0b00001000;
+pub const RCTRL: u8 = 0b00010000;
+pub const RSHIFT: u8 = 0b00100000;
+pub const RALT: u8 = 0b01000000;
+pub const RGUI: u8 = 0b10000000;
+
 pub const KEY_A: u8 = 0x04;
 pub const KEY_B: u8 = 0x05;
 pub const KEY_C: u8 = 0x06;
@@ -35,4 +47,12 @@ pub const KEY_8: u8 = 0x25;
 pub const KEY_9: u8 = 0x26;
 pub const KEY_0: u8 = 0x27;
 
-pub const KEY_ENTER: u8 = 40;
+pub const ENTER: u8 = 40;
+pub const BS: u8 = 42;
+pub const TAB: u8 = 43;
+pub const SP: u8 = 44;
+
+pub const RIGHT: u8 = 79;
+pub const LEFT: u8 = 80;
+pub const DOWN: u8 = 81;
+pub const UP: u8 = 82;
