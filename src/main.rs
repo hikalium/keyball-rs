@@ -16,13 +16,18 @@
 #![feature(exclusive_range_pattern)]
 #![feature(try_blocks)]
 
+pub mod display;
+pub mod keycode;
+pub mod keymap;
 pub mod pmw3360;
 
+use crate::display::*;
+use crate::keymap::*;
 use crate::pmw3360::*;
+use crate::KeyMapping::*;
 
 use core::cell::RefCell;
 use core::cmp::min;
-use core::convert::TryInto;
 use core::fmt;
 use core::str::from_utf8;
 use core::str::Utf8Error;
@@ -30,7 +35,6 @@ use cortex_m::interrupt::CriticalSection;
 use cortex_m::interrupt::Mutex;
 use cortex_m::prelude::_embedded_hal_spi_FullDuplex;
 use cortex_m_rt::entry;
-use display_interface::WriteOnlyDataCommand;
 use embedded_graphics::mono_font::{ascii::FONT_6X10, MonoTextStyle};
 use embedded_graphics::primitives::PrimitiveStyleBuilder;
 use embedded_graphics::primitives::Rectangle;
@@ -66,72 +70,6 @@ static mut USB_HID: Option<HIDClass<hal::usb::UsbBus>> = None;
 /// The USB Human Interface Device Driver (shared with the interrupt).
 static mut USB_HID_KEYBOARD: Option<HIDClass<hal::usb::UsbBus>> = None;
 
-pub const KEY_A: u8 = 0x04;
-pub const KEY_B: u8 = 0x05;
-pub const KEY_C: u8 = 0x06;
-pub const KEY_D: u8 = 0x07;
-pub const KEY_E: u8 = 0x08;
-pub const KEY_F: u8 = 0x09;
-pub const KEY_G: u8 = 0x0a;
-pub const KEY_H: u8 = 0x0b;
-pub const KEY_I: u8 = 0x0c;
-pub const KEY_J: u8 = 0x0d;
-pub const KEY_K: u8 = 0x0e;
-pub const KEY_L: u8 = 0x0f;
-pub const KEY_M: u8 = 0x10;
-pub const KEY_N: u8 = 0x11;
-pub const KEY_O: u8 = 0x12;
-pub const KEY_P: u8 = 0x13;
-pub const KEY_Q: u8 = 0x14;
-pub const KEY_R: u8 = 0x15;
-pub const KEY_S: u8 = 0x16;
-pub const KEY_T: u8 = 0x17;
-pub const KEY_U: u8 = 0x18;
-pub const KEY_V: u8 = 0x19;
-pub const KEY_W: u8 = 0x1a;
-pub const KEY_X: u8 = 0x1b;
-pub const KEY_Y: u8 = 0x1c;
-pub const KEY_Z: u8 = 0x1d;
-pub const KEY_1: u8 = 0x1e;
-pub const KEY_2: u8 = 0x1f;
-pub const KEY_3: u8 = 0x20;
-pub const KEY_4: u8 = 0x21;
-pub const KEY_5: u8 = 0x22;
-pub const KEY_6: u8 = 0x23;
-pub const KEY_7: u8 = 0x24;
-pub const KEY_8: u8 = 0x25;
-pub const KEY_9: u8 = 0x26;
-pub const KEY_0: u8 = 0x27;
-
-pub const KEY_ENTER: u8 = 40;
-
-pub const M_L: u8 = 0x01;
-pub const M_R: u8 = 0x02;
-
-enum KeyMapping {
-    Normal(u8),
-    Mouse(u8),
-    Empty,
-}
-use KeyMapping::*;
-/*
-#[rustfmt::skip]
-const KEYMAP: [[KeyMapping; 6]; 4] = [
-    [Normal(KEY_Y), Normal(KEY_U),  Normal(KEY_I),Normal(KEY_O),Normal(KEY_P),Normal(KEY_I),],
-    [Normal(KEY_H), Normal(KEY_J),  Normal(KEY_K),Normal(KEY_L),Normal(KEY_P),Normal(KEY_I),],
-    [Normal(KEY_N), Normal(KEY_M),  Normal(KEY_K),Normal(KEY_A),Normal(KEY_L),Normal(KEY_I),],
-    [Empty,         Mouse(M_L),     Mouse(M_R),   Normal(KEY_ENTER),Normal(KEY_L),Normal(KEY_I),],
-];
-*/
-
-#[rustfmt::skip]
-const KEYMAP: [[KeyMapping; 6]; 4] = [
-    [Normal(KEY_A), Normal(KEY_B),  Normal(KEY_C),Normal(KEY_D),Normal(KEY_E),Normal(KEY_F),],
-    [Normal(KEY_G), Normal(KEY_H),  Normal(KEY_I),Normal(KEY_J),Normal(KEY_K),Normal(KEY_L),],
-    [Normal(KEY_M), Normal(KEY_N),  Normal(KEY_O),Normal(KEY_P),Normal(KEY_Q),Normal(KEY_R),],
-    [Normal(KEY_S), Normal(KEY_T),  Normal(KEY_U),Normal(KEY_V),Normal(KEY_W),Normal(KEY_X),],
-];
-
 #[gen_hid_descriptor(
     (collection = APPLICATION, usage_page = GENERIC_DESKTOP, usage = KEYBOARD) = {
         (usage_page = KEYBOARD, usage_min = 0xE0, usage_max = 0xE7) = {
@@ -150,125 +88,6 @@ pub struct KeyboardReport2 {
     pub modifier: u8,
     pub reserved: u8,
     pub keycodes: [u8; 6],
-}
-
-#[derive(Debug)]
-struct CommError;
-
-const DISPLAY_WIDTH: usize = 128;
-const DISPLAY_HEIGHT: usize = 32;
-const DISPLAY_WIDTH_I32: i32 = DISPLAY_WIDTH as i32;
-const DISPLAY_HEIGHT_I32: i32 = DISPLAY_HEIGHT as i32;
-
-struct ExampleDisplay {
-    /// The framebuffer with one `u8` value per pixel.
-    framebuffer: [u8; DISPLAY_WIDTH * DISPLAY_HEIGHT],
-}
-
-impl ExampleDisplay {
-    pub fn new() -> Self {
-        use ssd1306::command::AddrMode;
-        use ssd1306::command::Command;
-        use ssd1306::command::VcomhLevel;
-        let cs = unsafe { CriticalSection::new() };
-        let interface = &mut *I2C_INTERFACE.borrow(&cs).get().unwrap().borrow_mut();
-        Command::DisplayOn(false).send(interface).unwrap();
-        Command::DisplayClockDiv(0x8, 0x0).send(interface).unwrap();
-        Command::Multiplex(64 - 1).send(interface).unwrap();
-        Command::DisplayOffset(0).send(interface).unwrap();
-        Command::StartLine(0).send(interface).unwrap();
-        Command::ChargePump(true).send(interface).unwrap();
-        Command::AddressMode(AddrMode::Horizontal)
-            .send(interface)
-            .unwrap();
-
-        Command::VcomhDeselect(VcomhLevel::Auto)
-            .send(interface)
-            .unwrap();
-        Command::AllOn(false).send(interface).unwrap();
-        Command::Invert(false).send(interface).unwrap();
-        Command::EnableScroll(false).send(interface).unwrap();
-
-        // Set page address to (0, 0)
-        interface
-            .send_commands(display_interface::DataFormat::U8(&[0x22, 0, 7]))
-            .unwrap();
-        // Set column address to (0, 0)
-        interface
-            .send_commands(display_interface::DataFormat::U8(&[0x21, 0, 127]))
-            .unwrap();
-
-        Command::DisplayOn(true).send(interface).unwrap();
-        Command::AllOn(true).send(interface).unwrap();
-        //delay.delay_ms(1000);
-        Command::AllOn(false).send(interface).unwrap();
-
-        ExampleDisplay {
-            framebuffer: [0; 64 * 64],
-        }
-    }
-    /// Updates the display from the framebuffer.
-    pub fn flush(&mut self) -> Result<(), CommError> {
-        let cs = unsafe { CriticalSection::new() };
-        let interface = &mut *I2C_INTERFACE.borrow(&cs).get().unwrap().borrow_mut();
-        // Set page address to (0, 0)
-        interface
-            .send_commands(display_interface::DataFormat::U8(&[0x22, 0, 7]))
-            .unwrap();
-        // Set column address to (0, 0)
-        interface
-            .send_commands(display_interface::DataFormat::U8(&[0x21, 0, 127]))
-            .unwrap();
-        // x, y in display coordinates
-        for y in 0..DISPLAY_HEIGHT / 4 {
-            for x in 0..DISPLAY_WIDTH {
-                let d = (self.framebuffer[(y * 4 + 3) * DISPLAY_WIDTH + x] << 6)
-                    + (self.framebuffer[(y * 4 + 2) * DISPLAY_WIDTH + x] << 4)
-                    + (self.framebuffer[(y * 4 + 1) * DISPLAY_WIDTH + x] << 2)
-                    + self.framebuffer[(y * 4) * DISPLAY_WIDTH + x];
-                interface
-                    .send_data(display_interface::DataFormat::U8(&[d]))
-                    .unwrap();
-            }
-        }
-        Ok(())
-    }
-}
-
-impl DrawTarget for ExampleDisplay {
-    type Color = BinaryColor;
-    // `ExampleDisplay` uses a framebuffer and doesn't need to communicate with the display
-    // controller to draw pixel, which means that drawing operations can never fail. To reflect
-    // this the type `Infallible` was chosen as the `Error` type.
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<IT>(&mut self, pixels: IT) -> Result<(), Self::Error>
-    where
-        IT: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(coord, color) in pixels.into_iter() {
-            // Check if the pixel coordinates are out of bounds (negative or greater than
-            // (63,63)). `DrawTarget` implementation are required to discard any out of bounds
-            // pixels without returning an error or causing a panic.
-            if let Ok((x @ 0..DISPLAY_HEIGHT_I32, y @ 0..DISPLAY_WIDTH_I32)) = coord.try_into() {
-                // Calculate the index in the framebuffer.
-                // convert corrdinates
-                let disp_x = y;
-                let disp_y = DISPLAY_HEIGHT_I32 - 1 - x;
-                let index = disp_x + disp_y * DISPLAY_WIDTH_I32;
-                self.framebuffer[index as usize] = if color.is_on() { 1 } else { 0 };
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl OriginDimensions for ExampleDisplay {
-    fn size(&self) -> Size {
-        // report rotated corrdinates
-        Size::new(DISPLAY_HEIGHT as u32, DISPLAY_WIDTH as u32)
-    }
 }
 
 struct KeyBall46 {}
@@ -733,22 +552,6 @@ fn body() -> Result<(), i32> {
 
     keyball46.print_num(5, line!());
 
-    /*
-    loop {
-        for i in 0..2 {
-            let id = read_pmw3360_reg(i);
-            match id {
-                Ok(v) => {
-                    keyball46.print_num_hex(5, i as u32);
-                    keyball46.print_num_hex(6, v as u32);
-                }
-                Err(e) => keyball46.panic(e as u32),
-            }
-            delay.borrow_mut().delay_ms(1000);
-        }
-    }
-    */
-
     read_pmw3360_reg(0x02)?;
     read_pmw3360_reg(0x03)?;
     read_pmw3360_reg(0x04)?;
@@ -828,7 +631,7 @@ fn body() -> Result<(), i32> {
         let mut keycodes = [0u8; 6];
         let mut next_keycode_index = 0;
 
-        for (y, keymap_row) in KEYMAP.iter().enumerate() {
+        for (y, keymap_row) in KEYMAP_LEFT.iter().enumerate() {
             for (i, row) in rows.iter_mut().enumerate() {
                 if i == y {
                     row.set_low().unwrap();
@@ -836,7 +639,7 @@ fn body() -> Result<(), i32> {
                     row.set_high().unwrap();
                 }
             }
-            delay.borrow_mut().delay_ms(20); // Wait a bit to propagete the voltage
+            delay.borrow_mut().delay_ms(5); // Wait a bit to propagete the voltage
             for (x, col) in cols.iter().enumerate() {
                 if col.is_low().unwrap() && next_keycode_index < keycodes.len() {
                     match keymap_row[x] {
