@@ -186,6 +186,25 @@ type DisplayI2C = ssd1306::prelude::I2CInterface<
 static I2C_INTERFACE: Mutex<OnceCell<RefCell<DisplayI2C>>> = Mutex::new(OnceCell::new());
 static DELAY: Mutex<OnceCell<RefCell<Delay>>> = Mutex::new(OnceCell::new());
 
+fn clear_screen() {
+    let cs = unsafe { CriticalSection::new() };
+    let display = &mut *DISPLAY.borrow(&cs).get().unwrap().borrow_mut();
+    let style = PrimitiveStyleBuilder::new()
+        .fill_color(BinaryColor::Off)
+        .build();
+    // Fill background
+    Rectangle::new(
+        Point::new(0, 0),
+        Size::new(
+            display.bounding_box().size.width,
+            display.bounding_box().size.height,
+        ),
+    )
+    .into_styled(style)
+    .draw(display)
+    .unwrap();
+}
+
 #[doc(hidden)]
 pub fn _print(row: usize, args: fmt::Arguments) {
     let mut print_buf = PrintBuf::new();
@@ -649,12 +668,28 @@ fn body() -> Result<(), i32> {
     rows[3].set_high().unwrap();
 
     let mut key_scanner = KeyScanner::new(&KEYMAP_LEFT, rows, cols);
+    {
+        // if some key is pressed on boot,
+    }
 
     // Move the cursor up and down every 200ms
     let mut last_keycodes = [0u8; 6];
     let mut last_modifiers = 0;
     loop {
         let result = key_scanner.scan();
+        if result.number_of_keys_pressed > 5 {
+            // Reboot the device into BOOTSEL mode when >5 keys are pressed
+            clear_screen();
+            print!(0, "****");
+            print!(1, "BOOT");
+            print!(2, "SEL");
+            print!(3, "****");
+            hal::rom_data::reset_to_usb_boot(0, 0);
+            loop {
+                cortex_m::asm::wfe();
+            }
+        }
+
         let keycodes = result.keycodes;
         let modifiers = result.modifiers;
         let mouse_buttons = result.mouse_buttons;
@@ -691,6 +726,7 @@ struct KeyScanResult {
     keycodes: [u8; 6],
     modifiers: u8,
     mouse_buttons: u8,
+    number_of_keys_pressed: u8,
 }
 
 struct KeyScanner<'a> {
@@ -703,48 +739,52 @@ impl<'a> KeyScanner<'a> {
     fn new(keymap: &'a KeyMap, rows: [&'a mut DynPin; 4], cols: [&'a mut DynPin; 6]) -> Self {
         KeyScanner { keymap, rows, cols }
     }
+    fn scan_matrix(&mut self) -> [[bool; 6]; 4] {
+        let mut matrix = [[false; 6]; 4];
+        for (y, row) in matrix.iter_mut().enumerate() {
+            for (i, pin_row) in self.rows.iter_mut().enumerate() {
+                if i == y {
+                    pin_row.set_low().unwrap();
+                } else {
+                    pin_row.set_high().unwrap();
+                }
+            }
+            delay_ms(5); // Wait a bit to propagete the voltage
+            for (x, key) in row.iter_mut().enumerate() {
+                *key = self.cols[x].is_low().unwrap();
+            }
+        }
+        matrix
+    }
     fn scan(&mut self) -> KeyScanResult {
         let mut mouse_buttons = 0;
         let mut keycodes = [0u8; 6];
         let mut modifiers = 0;
         let mut next_keycode_index = 0;
+        let mut number_of_keys_pressed = 0;
 
-        for (y, keymap_row) in self.keymap.iter().enumerate() {
-            for (i, row) in self.rows.iter_mut().enumerate() {
-                if i == y {
-                    row.set_low().unwrap();
-                } else {
-                    row.set_high().unwrap();
+        let matrix = self.scan_matrix();
+
+        for (y, row) in matrix.iter().enumerate() {
+            for (x, key) in row.iter().enumerate() {
+                if !*key {
+                    continue;
                 }
-            }
-            delay_ms(5); // Wait a bit to propagete the voltage
-            let mut reboot_to_bootsel = true;
-            for (x, col) in self.cols.iter().enumerate() {
-                if col.is_low().unwrap() {
-                    if next_keycode_index < keycodes.len() {
-                        match keymap_row[x] {
-                            K(keycode) => {
-                                keycodes[next_keycode_index] = keycode;
-                                next_keycode_index += 1;
-                            }
-                            KM(modifier) => {
-                                modifiers |= modifier;
-                            }
-                            M(button) => {
-                                mouse_buttons |= button;
-                            }
-                            Empty => {}
+                number_of_keys_pressed += 1;
+                if next_keycode_index < keycodes.len() {
+                    match self.keymap[y][x] {
+                        K(keycode) => {
+                            keycodes[next_keycode_index] = keycode;
+                            next_keycode_index += 1;
                         }
+                        KM(modifier) => {
+                            modifiers |= modifier;
+                        }
+                        M(button) => {
+                            mouse_buttons |= button;
+                        }
+                        Empty => {}
                     }
-                } else {
-                    reboot_to_bootsel = false;
-                }
-            }
-            if reboot_to_bootsel {
-                // Reboot the device into BOOTSEL mode when all keys in the same column is pressed
-                hal::rom_data::reset_to_usb_boot(0, 0);
-                loop {
-                    cortex_m::asm::wfe();
                 }
             }
         }
@@ -752,6 +792,7 @@ impl<'a> KeyScanner<'a> {
             keycodes,
             modifiers,
             mouse_buttons,
+            number_of_keys_pressed,
         }
     }
 }
