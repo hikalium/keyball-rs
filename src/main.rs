@@ -738,15 +738,120 @@ struct KeyScanResult {
     number_of_keys_pressed: u8,
 }
 
+fn char_to_key_scan_result(c: char) -> Option<KeyScanResult> {
+    use crate::keycode::*;
+    match c {
+        'a'..='z' => Some(KeyScanResult {
+            keycodes: [KEY_A + c as u8 - 'a' as u8, 0, 0, 0, 0, 0],
+            modifiers: 0,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '\x01' => Some(KeyScanResult {
+            keycodes: [0, 0, 0, 0, 0, 0],
+            modifiers: LSHIFT,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        'A'..='Z' => Some(KeyScanResult {
+            keycodes: [KEY_A + c as u8 - 'A' as u8, 0, 0, 0, 0, 0],
+            modifiers: LSHIFT,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '/' => Some(KeyScanResult {
+            keycodes: [56, 0, 0, 0, 0, 0],
+            modifiers: 0,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '{' => Some(KeyScanResult {
+            keycodes: [0x2f, 0, 0, 0, 0, 0],
+            modifiers: LSHIFT,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '}' => Some(KeyScanResult {
+            keycodes: [0x30, 0, 0, 0, 0, 0],
+            modifiers: LSHIFT,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '!' => Some(KeyScanResult {
+            keycodes: [0x1E, 0, 0, 0, 0, 0],
+            modifiers: LSHIFT,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '=' => Some(KeyScanResult {
+            keycodes: [46, 0, 0, 0, 0, 0],
+            modifiers: 0,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        ' ' => Some(KeyScanResult {
+            keycodes: [44, 0, 0, 0, 0, 0],
+            modifiers: 0,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '\n' => Some(KeyScanResult {
+            keycodes: [40, 0, 0, 0, 0, 0],
+            modifiers: 0,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 1,
+        }),
+        '\0' => Some(KeyScanResult {
+            keycodes: [0, 0, 0, 0, 0, 0],
+            modifiers: 0,
+            mouse_buttons: 0,
+            number_of_keys_pressed: 0,
+        }),
+        _ => None,
+    }
+}
+
+const MACRO_BUF_SIZE: usize = 512;
+
 struct KeyScanner<'a> {
     keymap: &'a KeyMap,
     rows: [&'a mut DynPin; 4],
     cols: [&'a mut DynPin; 6],
+    current_layer: usize,
+    macro_buf: [char; MACRO_BUF_SIZE],
+    macro_buf_read_index: usize,
+    macro_buf_write_index: usize,
 }
 
 impl<'a> KeyScanner<'a> {
     fn new(keymap: &'a KeyMap, rows: [&'a mut DynPin; 4], cols: [&'a mut DynPin; 6]) -> Self {
-        KeyScanner { keymap, rows, cols }
+        KeyScanner {
+            keymap,
+            rows,
+            cols,
+            current_layer: 0,
+            macro_buf: [' '; MACRO_BUF_SIZE],
+            macro_buf_read_index: 0,
+            macro_buf_write_index: 0,
+        }
+    }
+    fn macro_pop(&mut self) -> Option<char> {
+        if self.macro_buf_read_index == self.macro_buf_write_index {
+            None
+        } else {
+            let c = self.macro_buf[self.macro_buf_read_index];
+            self.macro_buf_read_index += 1;
+            self.macro_buf_read_index %= MACRO_BUF_SIZE;
+            Some(c)
+        }
+    }
+    fn macro_push(&mut self, c: char) {
+        if (self.macro_buf_write_index + 1) % MACRO_BUF_SIZE == self.macro_buf_read_index {
+            return;
+        }
+        self.macro_buf[self.macro_buf_write_index] = c;
+        self.macro_buf_write_index += 1;
+        self.macro_buf_write_index %= MACRO_BUF_SIZE;
     }
     fn scan_matrix(&mut self) -> [[bool; 6]; 4] {
         let mut matrix = [[false; 6]; 4];
@@ -766,6 +871,12 @@ impl<'a> KeyScanner<'a> {
         matrix
     }
     fn scan(&mut self) -> KeyScanResult {
+        if let Some(c) = self.macro_pop() {
+            if let Some(result) = char_to_key_scan_result(c) {
+                delay_ms(10);
+                return result;
+            }
+        }
         let mut mouse_buttons = 0;
         let mut keycodes = [0u8; 6];
         let mut modifiers = 0;
@@ -774,29 +885,49 @@ impl<'a> KeyScanner<'a> {
 
         let matrix = self.scan_matrix();
 
+        let mut next_layer = 0;
+
         for (y, row) in matrix.iter().enumerate() {
             for (x, key) in row.iter().enumerate() {
                 if !*key {
                     continue;
                 }
                 number_of_keys_pressed += 1;
-                if next_keycode_index < keycodes.len() {
-                    match self.keymap[0][y][x] {
-                        K(keycode) => {
+                match self.keymap[self.current_layer][y][x] {
+                    K(keycode) => {
+                        if next_keycode_index < keycodes.len() {
                             keycodes[next_keycode_index] = keycode;
                             next_keycode_index += 1;
                         }
-                        KM(modifier) => {
-                            modifiers |= modifier;
-                        }
-                        M(button) => {
-                            mouse_buttons |= button;
-                        }
-                        Empty => {}
                     }
+                    KM(modifier) => {
+                        modifiers |= modifier;
+                    }
+                    M(button) => {
+                        mouse_buttons |= button;
+                    }
+                    L(layer) => {
+                        next_layer = layer;
+                    }
+                    S(s) => {
+                        for c in s.chars() {
+                            match c {
+                                'A'..='Z' | '{' | '}' | '!' => {
+                                    self.macro_push(1 as char);
+                                }
+                                _ => {
+                                    self.macro_push('\0');
+                                }
+                            }
+                            self.macro_push(c);
+                            self.macro_push('\0');
+                        }
+                    }
+                    Empty => {}
                 }
             }
         }
+        self.current_layer = next_layer;
         KeyScanResult {
             keycodes,
             modifiers,

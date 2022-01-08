@@ -5,9 +5,11 @@ pub const M_R: u8 = 0x02;
 
 #[allow(dead_code)]
 pub enum KeyMapping {
-    K(u8),  // Key(keycode)
-    KM(u8), // Key(modifier)
-    M(u8),  // Mouse(button)
+    K(u8),           // Key(keycode)
+    KM(u8),          // Key(modifier)
+    M(u8),           // Mouse(button)
+    L(usize),        // Layer(layer)
+    S(&'static str), // String macro(text)
     Empty,
 }
 use KeyMapping::*;
@@ -43,16 +45,16 @@ pub const KEYMAP_RIGHT0: KeyMapLayer = [
     [K(KEY_Y), K(KEY_U),  K(KEY_I),K(KEY_O),K(KEY_P),K(KEY_I),],
     [K(KEY_H), K(KEY_J),  K(KEY_K),K(KEY_L),K(KEY_P),K(KEY_I),],
     [K(KEY_N), K(KEY_M),  K(KEY_K),K(KEY_A),K(KEY_L),K(KEY_I),],
-    [Empty,    M(M_L),    M(M_R),  K(ENTER),K(KEY_L),K(KEY_I),],
+    [Empty,    M(M_L),    M(M_R),  K(ENTER),K(KEY_L),L(1),],
 ];
 
 #[allow(dead_code)]
 #[rustfmt::skip]
 pub const KEYMAP_RIGHT1: KeyMapLayer = [
-    [K(KEY_Y), K(KEY_U), K(KEY_I), K(KEY_O), K(KEY_P), K(KEY_I)],
+    [K(KEY_X), K(KEY_U), S("if err != nil {\n  // Write your error handling here\n}\n"), K(KEY_O), K(KEY_P), K(KEY_I)],
     [K(KEY_H), K(KEY_J), K(KEY_K), K(KEY_L), K(KEY_P), K(KEY_I)],
     [K(KEY_N), K(KEY_M), K(KEY_K), K(KEY_A), K(KEY_L), K(KEY_I)],
-    [Empty, M(M_L), M(M_R), K(ENTER), K(KEY_L), K(KEY_I)],
+    [Empty, M(M_L), M(M_R), K(ENTER), K(KEY_L),        L(1)],
 ];
 
 pub const KEYMAP_RIGHT: KeyMap = [KEYMAP_RIGHT0, KEYMAP_RIGHT1];
