@@ -667,10 +667,19 @@ fn body() -> Result<(), i32> {
     rows[2].set_high().unwrap();
     rows[3].set_high().unwrap();
 
-    let mut key_scanner = KeyScanner::new(&KEYMAP_LEFT, rows, cols);
-    {
-        // if some key is pressed on boot,
+    if !is_right_hand_side {
+        cols.reverse();
     }
+
+    let mut key_scanner = KeyScanner::new(
+        if is_right_hand_side {
+            &KEYMAP_RIGHT
+        } else {
+            &KEYMAP_LEFT
+        },
+        rows,
+        cols,
+    );
 
     // Move the cursor up and down every 200ms
     let mut last_keycodes = [0u8; 6];
@@ -772,7 +781,7 @@ impl<'a> KeyScanner<'a> {
                 }
                 number_of_keys_pressed += 1;
                 if next_keycode_index < keycodes.len() {
-                    match self.keymap[y][x] {
+                    match self.keymap[0][y][x] {
                         K(keycode) => {
                             keycodes[next_keycode_index] = keycode;
                             next_keycode_index += 1;
