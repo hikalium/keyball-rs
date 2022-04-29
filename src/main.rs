@@ -1,16 +1,3 @@
-//! # Pico USB 'Twitchy' Mouse Example
-//!
-//! Creates a USB HID Class Poiting device (i.e. a virtual mouse) on a Pico
-//! board, with the USB driver running in the main thread.
-//!
-//! It generates movement reports which will twitch the cursor up and down by a
-//! few pixels, several times a second.
-//!
-//! See the `Cargo.toml` file for Copyright and licence details.
-//!
-//! This is a port of
-//! https://github.com/atsamd-rs/atsamd/blob/master/boards/itsybitsy_m0/examples/twitching_usb_mouse.rs
-
 #![no_std]
 #![no_main]
 #![feature(exclusive_range_pattern)]
